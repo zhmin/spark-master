@@ -225,8 +225,8 @@ class V1WriteCommandSuite extends QueryTest with SharedSparkSession with V1Write
             case s: SortExec => s
           }.exists {
             case SortExec(Seq(
-              SortOrder(AttributeReference("key", IntegerType, _, _), Ascending, NullsFirst, _),
-              SortOrder(AttributeReference("value", StringType, _, _), Ascending, NullsFirst, _)
+              SortOrder(AttributeReference("key", IntegerType, _, _), Ascending, NullsFirst, _, _),
+              SortOrder(AttributeReference("value", StringType, _, _), Ascending, NullsFirst, _, _)
             ), false, _, _) => true
             case _ => false
           }, plan)
@@ -272,8 +272,8 @@ class V1WriteCommandSuite extends QueryTest with SharedSparkSession with V1Write
           case s: SortExec => s
         }.exists {
           case SortExec(Seq(
-            SortOrder(AttributeReference("value", StringType, _, _), Ascending, NullsFirst, _),
-            SortOrder(AttributeReference("key", IntegerType, _, _), Ascending, NullsFirst, _)
+            SortOrder(AttributeReference("value", StringType, _, _), Ascending, NullsFirst, _, _),
+            SortOrder(AttributeReference("key", IntegerType, _, _), Ascending, NullsFirst, _, _)
           ), false, _, _) => true
           case _ => false
         }, plan)

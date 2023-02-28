@@ -94,6 +94,12 @@ case class Project(projectList: Seq[NamedExpression], child: LogicalPlan)
 
   override protected def withNewChildInternal(newChild: LogicalPlan): Project =
     copy(child = newChild)
+
+  override def orderingExpressions: Seq[SortOrder] = {
+    val literals = projectList.collect{ case p: Alias if p.child.isInstanceOf[Literal] =>
+      SortOrder(p.toAttribute, null, null)}
+    child.outputOrdering ++ literals
+  }
 }
 
 object Project {

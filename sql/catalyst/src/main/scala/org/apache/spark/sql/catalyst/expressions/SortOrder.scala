@@ -64,7 +64,8 @@ case class SortOrder(
     child: Expression,
     direction: SortDirection,
     nullOrdering: NullOrdering,
-    sameOrderExpressions: Seq[Expression])
+    sameOrderExpressions: Seq[Expression],
+    isLiteral: Boolean)
   extends Expression with Unevaluable {
 
   override def children: Seq[Expression] = child +: sameOrderExpressions
@@ -82,7 +83,8 @@ case class SortOrder(
 
   def satisfies(required: SortOrder): Boolean = {
     children.exists(required.child.semanticEquals) &&
-      direction == required.direction && nullOrdering == required.nullOrdering
+      ((direction == required.direction && nullOrdering == required.nullOrdering) ||
+        isLiteral)
   }
 
   override protected def withNewChildrenInternal(newChildren: IndexedSeq[Expression]): SortOrder =
@@ -93,8 +95,16 @@ object SortOrder {
   def apply(
      child: Expression,
      direction: SortDirection,
+     nullOrdering: NullOrdering,
+     sameOrderExpressions: Seq[Expression]): SortOrder = {
+    new SortOrder(child, direction, nullOrdering, sameOrderExpressions, false)
+  }
+
+  def apply(
+     child: Expression,
+     direction: SortDirection,
      sameOrderExpressions: Seq[Expression] = Seq.empty): SortOrder = {
-    new SortOrder(child, direction, direction.defaultNullOrdering, sameOrderExpressions)
+    new SortOrder(child, direction, direction.defaultNullOrdering, sameOrderExpressions, false)
   }
 
   /**
