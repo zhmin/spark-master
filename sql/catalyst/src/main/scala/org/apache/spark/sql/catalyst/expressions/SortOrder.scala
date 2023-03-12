@@ -45,12 +45,22 @@ case object Descending extends SortDirection {
   override def defaultNullOrdering: NullOrdering = NullsLast
 }
 
+case object LiteralDirection extends SortDirection {
+
+  override def sql: String = "LITERAL"
+  override def defaultNullOrdering: NullOrdering = NullsLast
+}
+
 case object NullsFirst extends NullOrdering {
   override def sql: String = "NULLS FIRST"
 }
 
 case object NullsLast extends NullOrdering {
   override def sql: String = "NULLS LAST"
+}
+
+case object LiteralOrdering extends NullOrdering {
+  override def sql: String = "LITERAL ORDERING"
 }
 
 /**
@@ -84,6 +94,8 @@ case class SortOrder(
   def satisfies(required: SortOrder): Boolean = {
     children.exists(required.child.semanticEquals) &&
       ((direction == required.direction && nullOrdering == required.nullOrdering) ||
+        (direction == LiteralDirection && nullOrdering == required.nullOrdering) ||
+        (direction == required.direction && nullOrdering == LiteralOrdering) ||
         isLiteral)
   }
 
@@ -119,12 +131,17 @@ object SortOrder {
    * </ul>
    */
   def orderingSatisfies(ordering1: Seq[SortOrder], ordering2: Seq[SortOrder]): Boolean = {
-    if (ordering2.isEmpty) {
+    // remove literal order
+    val literals = ordering1.filter(_.direction == LiteralDirection)
+    val ordering2NoLiteral = ordering2.filter(required =>
+      literals.exists(_.child.semanticEquals(required.child)))
+    val ordering1NoLiteral = ordering1.filter(_.direction == LiteralDirection)
+    if (ordering2NoLiteral.isEmpty) {
       true
-    } else if (ordering2.length > ordering1.length) {
+    } else if (ordering2NoLiteral.length > ordering1NoLiteral.length) {
       false
     } else {
-      ordering2.zip(ordering1).forall {
+      ordering1NoLiteral.zip(ordering2NoLiteral).forall {
         case (o2, o1) => o1.satisfies(o2)
       }
     }
