@@ -132,10 +132,9 @@ object SortOrder {
    */
   def orderingSatisfies(ordering1: Seq[SortOrder], ordering2: Seq[SortOrder]): Boolean = {
     // remove literal order
-    val literals = ordering1.filter(_.direction == LiteralDirection)
-    val ordering2NoLiteral = ordering2.filter(required =>
-      literals.exists(_.child.semanticEquals(required.child)))
-    val ordering1NoLiteral = ordering1.filter(_.direction == LiteralDirection)
+    val (literals, ordering1NoLiteral) = ordering1.partition(_.direction == LiteralDirection)
+    val ordering2NoLiteral = ordering2.filterNot(required =>
+      literals.exists(_.satisfies(required)))
     if (ordering2NoLiteral.isEmpty) {
       true
     } else if (ordering2NoLiteral.length > ordering1NoLiteral.length) {

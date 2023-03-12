@@ -300,7 +300,7 @@ case class Generate(
 }
 
 case class Filter(condition: Expression, child: LogicalPlan)
-  extends OrderPreservingUnaryNode with PredicateHelper {
+  extends UnaryNode with PredicateHelper {
   override def output: Seq[Attribute] = child.output
 
   override def maxRows: Option[Long] = child.maxRows
@@ -316,6 +316,26 @@ case class Filter(condition: Expression, child: LogicalPlan)
 
   override protected def withNewChildInternal(newChild: LogicalPlan): Filter =
     copy(child = newChild)
+
+  override def outputOrdering: Seq[SortOrder] = {
+    val predicates = splitConjunctivePredicates(condition).collect {
+      case exp: EqualNullSafe if isAttributeEqual(exp) =>
+        (Seq(exp.left, exp.right).find(p => p.isInstanceOf[AttributeReference])
+          .get.asInstanceOf[AttributeReference],
+          Seq(exp.left, exp.right).find(p => p.isInstanceOf[Literal])
+            .get.asInstanceOf[Literal])
+    }
+    val literalOrders = predicates.map(t => SortOrder(t._1, null, null))
+    child.outputOrdering ++ literalOrders
+  }
+
+  def isAttributeEqual(equalExp: EqualNullSafe): Boolean = {
+    val hasAttribute = equalExp.left.isInstanceOf[AttributeReference] ||
+      equalExp.right.isInstanceOf[AttributeReference]
+    val hasLiteral = equalExp.left.isInstanceOf[Literal] ||
+      equalExp.right.isInstanceOf[Literal]
+    hasAttribute & hasLiteral
+  }
 }
 
 abstract class SetOperation(left: LogicalPlan, right: LogicalPlan) extends BinaryNode {
