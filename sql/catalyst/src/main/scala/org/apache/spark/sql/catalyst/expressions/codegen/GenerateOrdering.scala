@@ -91,10 +91,12 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], BaseOrdering] with
       val lRetValue = nullOrdering match {
         case NullsFirst => "-1"
         case NullsLast => "1"
+//        case LiteralOrdering => "0"
       }
       val rRetValue = nullOrdering match {
         case NullsFirst => "1"
         case NullsLast => "-1"
+//        case LiteralOrdering => "0"
       }
       s"""
           |${l.code}

@@ -52,8 +52,16 @@ case class SortExec(
   // child operator's partitioning
   override def outputPartitioning: Partitioning = child.outputPartitioning
 
-  override def requiredChildDistribution: Seq[Distribution] =
-    if (global) OrderedDistribution(sortOrder) :: Nil else UnspecifiedDistribution :: Nil
+  override def requiredChildDistribution: Seq[Distribution] = {
+    if (global) {
+      val noLiterals = sortOrder.filterNot(s => s.direction == null && s.nullOrdering == null)
+      OrderedDistribution(noLiterals) :: Nil
+    }
+    else {
+      UnspecifiedDistribution :: Nil
+    }
+
+  }
 
   private val enableRadixSort = conf.enableRadixSort
 

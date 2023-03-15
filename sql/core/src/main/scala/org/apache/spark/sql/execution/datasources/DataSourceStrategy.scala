@@ -706,7 +706,7 @@ object DataSourceStrategy
 
   protected[sql] def translateSortOrders(sortOrders: Seq[SortOrder]): Seq[V2SortOrder] = {
     def translateSortOrder(sortOrder: SortOrder): Option[V2SortOrder] = sortOrder match {
-      case SortOrder(PushableExpression(expr), directionV1, nullOrderingV1, _, _) =>
+      case SortOrder(PushableExpression(expr), directionV1, nullOrderingV1, _) =>
         val directionV2 = directionV1 match {
           case Ascending => SortDirection.ASCENDING
           case Descending => SortDirection.DESCENDING

@@ -280,7 +280,27 @@ case class FilterExec(condition: Expression, child: SparkPlan)
     }
   }
 
-  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
+//  override def outputOrdering: Seq[SortOrder] = child.outputOrdering
+
+  override def outputOrdering: Seq[SortOrder] = {
+    val predicates = splitConjunctivePredicates(condition).collect {
+      case exp: EqualNullSafe if isAttributeEqual(exp) =>
+        (Seq(exp.left, exp.right).find(p => p.isInstanceOf[AttributeReference])
+          .get.asInstanceOf[AttributeReference],
+          Seq(exp.left, exp.right).find(p => p.isInstanceOf[Literal])
+            .get.asInstanceOf[Literal])
+    }
+    val literalOrders = predicates.map(t => SortOrder(t._1, null, null))
+    child.outputOrdering ++ literalOrders
+  }
+
+  def isAttributeEqual(equalExp: EqualNullSafe): Boolean = {
+    val hasAttribute = equalExp.left.isInstanceOf[AttributeReference] ||
+      equalExp.right.isInstanceOf[AttributeReference]
+    val hasLiteral = equalExp.left.isInstanceOf[Literal] ||
+      equalExp.right.isInstanceOf[Literal]
+    hasAttribute & hasLiteral
+  }
 
   override def outputPartitioning: Partitioning = child.outputPartitioning
 

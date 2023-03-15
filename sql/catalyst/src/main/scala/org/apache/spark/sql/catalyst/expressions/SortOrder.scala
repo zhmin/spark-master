@@ -45,11 +45,11 @@ case object Descending extends SortDirection {
   override def defaultNullOrdering: NullOrdering = NullsLast
 }
 
-case object LiteralDirection extends SortDirection {
-
-  override def sql: String = "LITERAL"
-  override def defaultNullOrdering: NullOrdering = NullsLast
-}
+// case object LiteralDirection extends SortDirection {
+//
+//  override def sql: String = "LITERAL"
+//  override def defaultNullOrdering: NullOrdering = NullsLast
+// }
 
 case object NullsFirst extends NullOrdering {
   override def sql: String = "NULLS FIRST"
@@ -59,9 +59,9 @@ case object NullsLast extends NullOrdering {
   override def sql: String = "NULLS LAST"
 }
 
-case object LiteralOrdering extends NullOrdering {
-  override def sql: String = "LITERAL ORDERING"
-}
+// case object LiteralOrdering extends NullOrdering {
+//  override def sql: String = "LITERAL ORDERING"
+// }
 
 /**
  * An expression that can be used to sort a tuple.  This class extends expression primarily so that
@@ -93,8 +93,10 @@ case class SortOrder(
   def satisfies(required: SortOrder): Boolean = {
     children.exists(required.child.semanticEquals) &&
       (direction == required.direction && nullOrdering == required.nullOrdering) ||
-        (direction == LiteralDirection && nullOrdering == required.nullOrdering) ||
-        (direction == required.direction && nullOrdering == LiteralOrdering)
+            (direction == null && nullOrdering == required.nullOrdering) ||
+            (direction == required.direction && nullOrdering == null)
+//        (direction == LiteralDirection && nullOrdering == required.nullOrdering) ||
+//        (direction == required.direction && nullOrdering == LiteralOrdering)
   }
 
   override protected def withNewChildrenInternal(newChildren: IndexedSeq[Expression]): SortOrder =
@@ -130,7 +132,8 @@ object SortOrder {
    */
   def orderingSatisfies(ordering1: Seq[SortOrder], ordering2: Seq[SortOrder]): Boolean = {
     // remove literal order
-    val (literals, ordering1NoLiteral) = ordering1.partition(_.direction == LiteralDirection)
+    val (literals, ordering1NoLiteral) = ordering1.partition(o =>
+      o.direction == null && o.nullOrdering == null)
     val ordering2NoLiteral = ordering2.filterNot(required =>
       literals.exists(_.satisfies(required)))
     if (ordering2NoLiteral.isEmpty) {

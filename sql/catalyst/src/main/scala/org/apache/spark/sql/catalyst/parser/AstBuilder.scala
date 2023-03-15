@@ -2041,11 +2041,13 @@ class AstBuilder extends SqlBaseParserBaseVisitor[AnyRef] with SQLConfHelper wit
         sortOrder.direction match {
           case Ascending => PercentileCont(sortOrder.child, percentage)
           case Descending => PercentileCont(sortOrder.child, percentage, true)
+//          case LiteralDirection => throw new IllegalArgumentException()
         }
       case SqlBaseParser.PERCENTILE_DISC =>
         sortOrder.direction match {
           case Ascending => PercentileDisc(sortOrder.child, percentage)
           case Descending => PercentileDisc(sortOrder.child, percentage, true)
+//          case LiteralDirection => throw new IllegalArgumentException()
         }
     }
     val filter = Option(ctx.where).map(expression(_))
