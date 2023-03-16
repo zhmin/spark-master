@@ -271,12 +271,36 @@ sql_kafka = Module(
     ],
 )
 
+mllib_local = Module(
+    name="mllib-local",
+    dependencies=[tags, core],
+    source_file_regexes=[
+        "mllib/local",
+    ],
+    sbt_test_goals=[
+        "mllib-local/test",
+    ],
+)
+
+
+mllib_common = Module(
+    name="mllib-common",
+    dependencies=[tags, mllib_local, sql],
+    source_file_regexes=[
+        "mllib/common",
+    ],
+    sbt_test_goals=[
+        "mllib-common/test",
+    ],
+)
+
 connect = Module(
     name="connect",
-    dependencies=[sql],
+    dependencies=[hive, mllib_common],
     source_file_regexes=[
         "connector/connect",
     ],
+    build_profile_flags=["-Pconnect"],
     sbt_test_goals=[
         "connect/test",
         "connect-client-jvm/test",
@@ -358,24 +382,12 @@ streaming_kafka_0_10 = Module(
 )
 
 
-mllib_local = Module(
-    name="mllib-local",
-    dependencies=[tags, core],
-    source_file_regexes=[
-        "mllib-local",
-    ],
-    sbt_test_goals=[
-        "mllib-local/test",
-    ],
-)
-
-
 mllib = Module(
     name="mllib",
-    dependencies=[mllib_local, streaming, sql],
+    dependencies=[mllib_local, mllib_common, streaming, sql],
     source_file_regexes=[
         "data/mllib/",
-        "mllib/",
+        "mllib/core/",
     ],
     sbt_test_goals=[
         "mllib/test",
@@ -508,6 +520,7 @@ pyspark_connect = Module(
     python_test_goals=[
         # doctests
         "pyspark.sql.connect.catalog",
+        "pyspark.sql.connect.conf",
         "pyspark.sql.connect.group",
         "pyspark.sql.connect.session",
         "pyspark.sql.connect.window",
@@ -516,12 +529,14 @@ pyspark_connect = Module(
         "pyspark.sql.connect.dataframe",
         "pyspark.sql.connect.functions",
         # unittests
+        "pyspark.sql.tests.connect.test_client",
         "pyspark.sql.tests.connect.test_connect_plan",
         "pyspark.sql.tests.connect.test_connect_basic",
         "pyspark.sql.tests.connect.test_connect_function",
         "pyspark.sql.tests.connect.test_connect_column",
         "pyspark.sql.tests.connect.test_parity_datasources",
         "pyspark.sql.tests.connect.test_parity_catalog",
+        "pyspark.sql.tests.connect.test_parity_conf",
         "pyspark.sql.tests.connect.test_parity_serde",
         "pyspark.sql.tests.connect.test_parity_functions",
         "pyspark.sql.tests.connect.test_parity_group",
@@ -531,6 +546,8 @@ pyspark_connect = Module(
         "pyspark.sql.tests.connect.test_parity_readwriter",
         "pyspark.sql.tests.connect.test_parity_udf",
         "pyspark.sql.tests.connect.test_parity_pandas_udf",
+        "pyspark.sql.tests.connect.test_parity_pandas_map",
+        "pyspark.sql.tests.connect.test_parity_arrow_map",
     ],
     excluded_python_implementations=[
         "PyPy"  # Skip these tests under PyPy since they require numpy, pandas, and pyarrow and

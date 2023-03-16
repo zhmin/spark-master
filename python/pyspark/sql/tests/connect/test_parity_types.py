@@ -90,11 +90,6 @@ class TypesParityTests(TypesTestsMixin, ReusedConnectTestCase):
     def test_infer_schema(self):
         super().test_infer_schema()
 
-    # TODO(SPARK-42022): createDataFrame should autogenerate missing column names
-    @unittest.skip("Fails in Spark Connect, should enable.")
-    def test_infer_schema_not_enough_names(self):
-        super().test_infer_schema_not_enough_names()
-
     # TODO(SPARK-42020): createDataFrame with UDT
     @unittest.skip("Fails in Spark Connect, should enable.")
     def test_infer_schema_specification(self):
@@ -112,11 +107,6 @@ class TypesParityTests(TypesTestsMixin, ReusedConnectTestCase):
     @unittest.skip("Fails in Spark Connect, should enable.")
     def test_infer_schema_with_udt(self):
         super().test_infer_schema_with_udt()
-
-    # TODO(SPARK-41834): Implement SparkSession.conf
-    @unittest.skip("Fails in Spark Connect, should enable.")
-    def test_negative_decimal(self):
-        super().test_negative_decimal()
 
     # TODO(SPARK-42020): createDataFrame with UDT
     @unittest.skip("Fails in Spark Connect, should enable.")

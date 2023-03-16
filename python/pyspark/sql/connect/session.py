@@ -16,7 +16,7 @@
 #
 from pyspark.sql.connect.utils import check_dependencies
 
-check_dependencies(__name__, __file__)
+check_dependencies(__name__)
 
 import os
 import warnings
@@ -43,15 +43,17 @@ import pyarrow as pa
 from pandas.api.types import (  # type: ignore[attr-defined]
     is_datetime64_dtype,
     is_datetime64tz_dtype,
+    is_timedelta64_dtype,
 )
 
 from pyspark import SparkContext, SparkConf, __version__
 from pyspark.sql.connect.client import SparkConnectClient
+from pyspark.sql.connect.conf import RuntimeConf
 from pyspark.sql.connect.dataframe import DataFrame
-from pyspark.sql.connect.plan import SQL, Range, LocalRelation
+from pyspark.sql.connect.plan import SQL, Range, LocalRelation, CachedRelation
 from pyspark.sql.connect.readwriter import DataFrameReader
 from pyspark.sql.pandas.serializers import ArrowStreamPandasSerializer
-from pyspark.sql.pandas.types import to_arrow_type, _get_local_timezone
+from pyspark.sql.pandas.types import to_arrow_schema, to_arrow_type, _get_local_timezone
 from pyspark.sql.session import classproperty, SparkSession as PySparkSession
 from pyspark.sql.types import (
     _infer_schema,
@@ -59,6 +61,7 @@ from pyspark.sql.types import (
     _merge_type,
     Row,
     DataType,
+    DayTimeIntervalType,
     StructType,
     AtomicType,
     TimestampType,
@@ -69,6 +72,11 @@ if TYPE_CHECKING:
     from pyspark.sql.connect._typing import OptionalPrimitiveType
     from pyspark.sql.connect.catalog import Catalog
     from pyspark.sql.connect.udf import UDFRegistration
+
+
+# `_active_spark_session` stores the active spark connect session created by
+# `SparkSession.builder.getOrCreate`. It is used by ML code.
+_active_spark_session = None
 
 
 class SparkSession:
@@ -116,7 +124,11 @@ class SparkSession:
             raise NotImplementedError("enableHiveSupport not implemented for Spark Connect")
 
         def getOrCreate(self) -> "SparkSession":
-            return SparkSession(connectionString=self._options["spark.remote"])
+            global _active_spark_session
+            if _active_spark_session is not None:
+                return _active_spark_session
+            _active_spark_session = SparkSession(connectionString=self._options["spark.remote"])
+            return _active_spark_session
 
     _client: SparkConnectClient
 
@@ -232,10 +244,16 @@ class SparkSession:
             # If no schema supplied by user then get the names of columns only
             if schema is None:
                 _cols = [str(x) if not isinstance(x, str) else x for x in data.columns]
+            elif isinstance(schema, (list, tuple)) and cast(int, _num_cols) < len(data.columns):
+                assert isinstance(_cols, list)
+                _cols.extend([f"_{i + 1}" for i in range(cast(int, _num_cols), len(data.columns))])
+                _num_cols = len(_cols)
 
             # Determine arrow types to coerce data when creating batches
+            arrow_schema: Optional[pa.Schema] = None
             if isinstance(schema, StructType):
-                arrow_types = [to_arrow_type(f.dataType) for f in schema.fields]
+                arrow_schema = to_arrow_schema(schema)
+                arrow_types = [field.type for field in arrow_schema]
                 _cols = [str(x) if not isinstance(x, str) else x for x in schema.fieldNames()]
             elif isinstance(schema, DataType):
                 raise ValueError("Single data type %s is not supported with Arrow" % str(schema))
@@ -244,6 +262,8 @@ class SparkSession:
                 arrow_types = [
                     to_arrow_type(TimestampType())
                     if is_datetime64_dtype(t) or is_datetime64tz_dtype(t)
+                    else to_arrow_type(DayTimeIntervalType())
+                    if is_timedelta64_dtype(t)
                     else None
                     for t in data.dtypes
                 ]
@@ -257,6 +277,10 @@ class SparkSession:
             _table = pa.Table.from_batches(
                 [ser._create_batch([(c, t) for (_, c), t in zip(data.items(), arrow_types)])]
             )
+
+            if isinstance(schema, StructType):
+                assert arrow_schema is not None
+                _table = _table.rename_columns(schema.names).cast(arrow_schema)
 
         elif isinstance(data, np.ndarray):
             if data.ndim not in [1, 2]:
@@ -302,18 +326,35 @@ class SparkSession:
                 # we need to convert it to [[1], [2], [3]] to be able to infer schema.
                 _data = [[d] for d in _data]
 
-            _inferred_schema = self._inferSchemaFromList(_data, _cols)
+            if _schema is not None:
+                if isinstance(_schema, StructType):
+                    _inferred_schema = _schema
+                else:
+                    _inferred_schema = StructType().add("value", _schema)
+            else:
+                _inferred_schema = self._inferSchemaFromList(_data, _cols)
 
-            if _has_nulltype(_inferred_schema):
-                # For cases like createDataFrame([("Alice", None, 80.1)], schema)
-                # we can not infer the schema from the data itself.
-                warnings.warn("failed to infer the schema from data")
-                if _schema is None or not isinstance(_schema, StructType):
-                    raise ValueError(
-                        "Some of types cannot be determined after inferring, "
-                        "a StructType Schema is required in this case"
-                    )
-                _inferred_schema = _schema
+                if _cols is not None and cast(int, _num_cols) < len(_cols):
+                    _num_cols = len(_cols)
+
+                if _has_nulltype(_inferred_schema):
+                    # For cases like createDataFrame([("Alice", None, 80.1)], schema)
+                    # we can not infer the schema from the data itself.
+                    warnings.warn("failed to infer the schema from data")
+                    if _schema is None and _schema_str is not None:
+                        _parsed = self.client._analyze(
+                            method="ddl_parse", ddl_string=_schema_str
+                        ).parsed
+                        if isinstance(_parsed, StructType):
+                            _schema = _parsed
+                        elif isinstance(_parsed, DataType):
+                            _schema = StructType().add("value", _parsed)
+                    if _schema is None or not isinstance(_schema, StructType):
+                        raise ValueError(
+                            "Some of types cannot be determined after inferring, "
+                            "a StructType Schema is required in this case"
+                        )
+                    _inferred_schema = _schema
 
             from pyspark.sql.connect.conversion import LocalDataToArrowConversion
 
@@ -342,7 +383,12 @@ class SparkSession:
     createDataFrame.__doc__ = PySparkSession.createDataFrame.__doc__
 
     def sql(self, sqlQuery: str, args: Optional[Dict[str, str]] = None) -> "DataFrame":
-        return DataFrame.withPlan(SQL(sqlQuery, args), self)
+        cmd = SQL(sqlQuery, args)
+        data, properties = self.client.execute_command(cmd.command(self._client))
+        if "sql_command_result" in properties:
+            return DataFrame.withPlan(CachedRelation(properties["sql_command_result"]), self)
+        else:
+            return DataFrame.withPlan(SQL(sqlQuery, args), self)
 
     sql.__doc__ = PySparkSession.sql.__doc__
 
@@ -397,7 +443,9 @@ class SparkSession:
         # specifically in Spark Connect the Spark Connect server is designed for
         # multi-tenancy - the remote client side cannot just stop the server and stop
         # other remote clients being used from other users.
+        global _active_spark_session
         self.client.close()
+        _active_spark_session = None
 
         if "SPARK_LOCAL_REMOTE" in os.environ:
             # When local mode is in use, follow the regular Spark session's
@@ -421,8 +469,8 @@ class SparkSession:
         raise NotImplementedError("newSession() is not implemented.")
 
     @property
-    def conf(self) -> Any:
-        raise NotImplementedError("conf() is not implemented.")
+    def conf(self) -> RuntimeConf:
+        return RuntimeConf(self.client)
 
     @property
     def sparkContext(self) -> Any:
@@ -446,7 +494,9 @@ class SparkSession:
 
     @property
     def version(self) -> str:
-        raise NotImplementedError("version() is not implemented.")
+        result = self._client._analyze(method="spark_version").spark_version
+        assert result is not None
+        return result
 
     # SparkConnect-specific API
     @property

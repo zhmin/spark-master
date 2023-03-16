@@ -22,9 +22,12 @@ if sys.version_info >= (3, 8):
 else:
     from typing_extensions import Protocol
 
-from typing import Any, Callable, Union, Optional
+from typing import Any, Callable, Iterable, Union, Optional
 import datetime
 import decimal
+
+import pyarrow
+from pandas.core.frame import DataFrame as PandasDataFrame
 
 from pyspark.sql.connect.column import Column
 from pyspark.sql.connect.types import DataType
@@ -43,6 +46,12 @@ DecimalLiteral = decimal.Decimal
 DateTimeLiteral = Union[datetime.datetime, datetime.date]
 
 DataTypeOrString = Union[DataType, str]
+
+DataFrameLike = PandasDataFrame
+
+PandasMapIterFunction = Callable[[Iterable[DataFrameLike]], Iterable[DataFrameLike]]
+
+ArrowMapIterFunction = Callable[[Iterable[pyarrow.RecordBatch]], Iterable[pyarrow.RecordBatch]]
 
 
 class UserDefinedFunctionLike(Protocol):

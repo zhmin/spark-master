@@ -892,11 +892,14 @@ class SparkConnectFunctionTests(ReusedConnectTestCase, PandasOnSparkTestUtils, S
         ):
             cdf.select(CF.sum("a").over(CW.orderBy("b").rowsBetween(0, (1 << 33)))).show()
 
-        with self.assertRaisesRegex(
-            TypeError,
-            "window should be WindowSpec",
-        ):
+        with self.assertRaises(PySparkTypeError) as pe:
             cdf.select(CF.rank().over(cdf.a))
+
+        self.check_error(
+            exception=pe.exception,
+            error_class="NOT_WINDOWSPEC",
+            message_parameters={"arg_name": "window", "arg_type": "Column"},
+        )
 
         # invalid window function
         with self.assertRaises(AnalysisException):
@@ -2390,14 +2393,11 @@ class SparkConnectFunctionTests(ReusedConnectTestCase, PandasOnSparkTestUtils, S
             sdf.withColumn("A", sfun(sdf.c)).toPandas(),
         )
 
-    def test_unsupported_functions(self):
-        # SPARK-41928: Disable unsupported functions.
-
+    def test_pandas_udf_import(self):
         from pyspark.sql.connect import functions as CF
+        from pyspark.sql import functions as SF
 
-        for f in ("pandas_udf",):
-            with self.assertRaises(NotImplementedError):
-                getattr(CF, f)()
+        self.assert_eq(getattr(CF, "pandas_udf"), getattr(SF, "pandas_udf"))
 
 
 if __name__ == "__main__":

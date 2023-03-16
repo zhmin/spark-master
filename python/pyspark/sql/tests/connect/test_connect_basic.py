@@ -59,6 +59,7 @@ if should_test_connect:
     import grpc
     import pandas as pd
     import numpy as np
+    from pyspark.sql.connect.proto import Expression as ProtoExpression
     from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
     from pyspark.sql.connect.client import ChannelBuilder
     from pyspark.sql.connect.column import Column
@@ -1631,6 +1632,57 @@ class SparkConnectBasicTests(SparkConnectSQLTestCase):
             self.assert_eq(relations[i].toPandas(), datasets[i].toPandas())
             i += 1
 
+    def test_observe(self):
+        # SPARK-41527: test DataFrame.observe()
+        from pyspark.sql import functions as SF
+        from pyspark.sql.connect import functions as CF
+
+        observation_name = "my_metric"
+
+        self.assert_eq(
+            self.connect.read.table(self.tbl_name)
+            .filter("id > 3")
+            .observe(observation_name, CF.min("id"), CF.max("id"), CF.sum("id"))
+            .toPandas(),
+            self.spark.read.table(self.tbl_name)
+            .filter("id > 3")
+            .observe(observation_name, SF.min("id"), SF.max("id"), SF.sum("id"))
+            .toPandas(),
+        )
+
+        from pyspark.sql.observation import Observation
+
+        observation = Observation(observation_name)
+
+        cdf = (
+            self.connect.read.table(self.tbl_name)
+            .filter("id > 3")
+            .observe(observation, CF.min("id"), CF.max("id"), CF.sum("id"))
+            .toPandas()
+        )
+        df = (
+            self.spark.read.table(self.tbl_name)
+            .filter("id > 3")
+            .observe(observation, SF.min("id"), SF.max("id"), SF.sum("id"))
+            .toPandas()
+        )
+
+        self.assert_eq(cdf, df)
+
+        observed_metrics = cdf.attrs["observed_metrics"]
+        self.assert_eq(len(observed_metrics), 1)
+        self.assert_eq(observed_metrics[0].name, observation_name)
+        self.assert_eq(len(observed_metrics[0].metrics), 3)
+        for metric in observed_metrics[0].metrics:
+            self.assertIsInstance(metric, ProtoExpression.Literal)
+        values = list(map(lambda metric: metric.long, observed_metrics[0].metrics))
+        self.assert_eq(values, [4, 99, 4944])
+
+        with self.assertRaisesRegex(ValueError, "'exprs' should not be empty"):
+            self.connect.read.table(self.tbl_name).observe(observation_name)
+        with self.assertRaisesRegex(ValueError, "all 'exprs' should be Column"):
+            self.connect.read.table(self.tbl_name).observe(observation_name, CF.lit(1), "id")
+
     def test_with_columns(self):
         # SPARK-41256: test withColumn(s).
         self.assert_eq(
@@ -2751,6 +2803,25 @@ class SparkConnectBasicTests(SparkConnectSQLTestCase):
                     self.spark.read.parquet(path).schema,
                 )
 
+    def test_version(self):
+        self.assertEqual(
+            self.connect.version,
+            self.spark.version,
+        )
+
+    def test_same_semantics(self):
+        plan = self.connect.sql("SELECT 1")
+        other = self.connect.sql("SELECT 1")
+        self.assertTrue(plan.sameSemantics(other))
+
+    def test_semantic_hash(self):
+        plan = self.connect.sql("SELECT 1")
+        other = self.connect.sql("SELECT 1")
+        self.assertEqual(
+            plan.semanticHash(),
+            other.semanticHash(),
+        )
+
     def test_unsupported_functions(self):
         # SPARK-41225: Disable unsupported functions.
         df = self.connect.read.table(self.tbl_name)
@@ -2760,15 +2831,12 @@ class SparkConnectBasicTests(SparkConnectSQLTestCase):
             "cache",
             "persist",
             "withWatermark",
-            "observe",
             "foreach",
             "foreachPartition",
             "toLocalIterator",
             "checkpoint",
             "localCheckpoint",
             "_repr_html_",
-            "semanticHash",
-            "sameSemantics",
         ):
             with self.assertRaises(NotImplementedError):
                 getattr(df, f)()
@@ -2796,26 +2864,77 @@ class SparkConnectBasicTests(SparkConnectSQLTestCase):
 
         for f in (
             "newSession",
-            "conf",
             "sparkContext",
             "streams",
             "readStream",
-            "version",
         ):
             with self.assertRaises(NotImplementedError):
                 getattr(self.connect, f)()
 
-    def test_unsupported_io_functions(self):
-        # SPARK-41964: Disable unsupported functions.
-        df = self.connect.createDataFrame([(x, f"{x}") for x in range(100)], ["id", "name"])
+    def test_sql_with_command(self):
+        # SPARK-42705: spark.sql should return values from the command.
+        self.assertEqual(
+            self.connect.sql("show functions").collect(), self.spark.sql("show functions").collect()
+        )
 
-        for f in ("jdbc",):
-            with self.assertRaises(NotImplementedError):
-                getattr(self.connect.read, f)()
+    def test_schema_has_nullable(self):
+        schema_false = StructType().add("id", IntegerType(), False)
+        cdf1 = self.connect.createDataFrame([[1]], schema=schema_false)
+        sdf1 = self.spark.createDataFrame([[1]], schema=schema_false)
+        self.assertEqual(cdf1.schema, sdf1.schema)
+        self.assertEqual(cdf1.collect(), sdf1.collect())
 
-        for f in ("jdbc",):
-            with self.assertRaises(NotImplementedError):
-                getattr(df.write, f)()
+        schema_true = StructType().add("id", IntegerType(), True)
+        cdf2 = self.connect.createDataFrame([[1]], schema=schema_true)
+        sdf2 = self.spark.createDataFrame([[1]], schema=schema_true)
+        self.assertEqual(cdf2.schema, sdf2.schema)
+        self.assertEqual(cdf2.collect(), sdf2.collect())
+
+        pdf1 = cdf1.toPandas()
+        cdf3 = self.connect.createDataFrame(pdf1, cdf1.schema)
+        sdf3 = self.spark.createDataFrame(pdf1, sdf1.schema)
+        self.assertEqual(cdf3.schema, sdf3.schema)
+        self.assertEqual(cdf3.collect(), sdf3.collect())
+
+        pdf2 = cdf2.toPandas()
+        cdf4 = self.connect.createDataFrame(pdf2, cdf2.schema)
+        sdf4 = self.spark.createDataFrame(pdf2, sdf2.schema)
+        self.assertEqual(cdf4.schema, sdf4.schema)
+        self.assertEqual(cdf4.collect(), sdf4.collect())
+
+    def test_array_has_nullable(self):
+        schema_array_false = StructType().add("arr", ArrayType(IntegerType(), False))
+        cdf1 = self.connect.createDataFrame([Row([1, 2]), Row([3])], schema=schema_array_false)
+        sdf1 = self.spark.createDataFrame([Row([1, 2]), Row([3])], schema=schema_array_false)
+        self.assertEqual(cdf1.schema, sdf1.schema)
+        self.assertEqual(cdf1.collect(), sdf1.collect())
+
+        schema_array_true = StructType().add("arr", ArrayType(IntegerType(), True))
+        cdf2 = self.connect.createDataFrame([Row([1, None]), Row([3])], schema=schema_array_true)
+        sdf2 = self.spark.createDataFrame([Row([1, None]), Row([3])], schema=schema_array_true)
+        self.assertEqual(cdf2.schema, sdf2.schema)
+        self.assertEqual(cdf2.collect(), sdf2.collect())
+
+    def test_map_has_nullable(self):
+        schema_map_false = StructType().add("map", MapType(StringType(), IntegerType(), False))
+        cdf1 = self.connect.createDataFrame(
+            [Row({"a": 1, "b": 2}), Row({"a": 3})], schema=schema_map_false
+        )
+        sdf1 = self.spark.createDataFrame(
+            [Row({"a": 1, "b": 2}), Row({"a": 3})], schema=schema_map_false
+        )
+        self.assertEqual(cdf1.schema, sdf1.schema)
+        self.assertEqual(cdf1.collect(), sdf1.collect())
+
+        schema_map_true = StructType().add("map", MapType(StringType(), IntegerType(), True))
+        cdf2 = self.connect.createDataFrame(
+            [Row({"a": 1, "b": None}), Row({"a": 3})], schema=schema_map_true
+        )
+        sdf2 = self.spark.createDataFrame(
+            [Row({"a": 1, "b": None}), Row({"a": 3})], schema=schema_map_true
+        )
+        self.assertEqual(cdf2.schema, sdf2.schema)
+        self.assertEqual(cdf2.collect(), sdf2.collect())
 
 
 @unittest.skipIf(not should_test_connect, connect_requirement_message)
@@ -2949,9 +3068,32 @@ class ChannelBuilderTests(unittest.TestCase):
 
         chan = ChannelBuilder("sc://host/;token=abcs")
         self.assertTrue(chan.secure, "specifying a token must set the channel to secure")
-
+        self.assertEqual(chan.userAgent, "_SPARK_CONNECT_PYTHON")
         chan = ChannelBuilder("sc://host/;use_ssl=abcs")
         self.assertFalse(chan.secure, "Garbage in, false out")
+
+    def test_invalid_user_agent_charset(self):
+        # fmt: off
+        invalid_user_agents = [
+            "agent»",  # non standard symbol
+            "age nt",  # whitespace
+            "ägent",   # non-ascii alphabet
+        ]
+        # fmt: on
+        for user_agent in invalid_user_agents:
+            with self.subTest(user_agent=user_agent):
+                chan = ChannelBuilder(f"sc://host/;user_agent={user_agent}")
+                with self.assertRaises(SparkConnectException) as err:
+                    chan.userAgent
+
+                self.assertRegex(err.exception.message, "alphanumeric and common punctuations")
+
+    def test_invalid_user_agent_len(self):
+        user_agent = "x" * 201
+        chan = ChannelBuilder(f"sc://host/;user_agent={user_agent}")
+        with self.assertRaises(SparkConnectException) as err:
+            chan.userAgent
+        self.assertRegex(err.exception.message, "characters in length")
 
     def test_valid_channel_creation(self):
         chan = ChannelBuilder("sc://host").toChannel()
@@ -2965,8 +3107,9 @@ class ChannelBuilderTests(unittest.TestCase):
         self.assertIsInstance(chan, grpc.Channel)
 
     def test_channel_properties(self):
-        chan = ChannelBuilder("sc://host/;use_ssl=true;token=abc;param1=120%2021")
+        chan = ChannelBuilder("sc://host/;use_ssl=true;token=abc;user_agent=foo;param1=120%2021")
         self.assertEqual("host:15002", chan.endpoint)
+        self.assertEqual("foo", chan.userAgent)
         self.assertEqual(True, chan.secure)
         self.assertEqual("120 21", chan.get("param1"))
 

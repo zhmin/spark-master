@@ -265,6 +265,7 @@ class Analyzer(override val catalogManager: CatalogManager) extends RuleExecutor
       // at the beginning of analysis.
       OptimizeUpdateFields,
       CTESubstitution,
+      BindParameters,
       WindowsSubstitution,
       EliminateUnions,
       SubstituteUnresolvedOrdinals),
@@ -1039,13 +1040,6 @@ class Analyzer(override val catalogManager: CatalogManager) extends RuleExecutor
           child = addMetadataCol(p.child, requiredAttrIds))
         newProj.copyTagsFrom(p)
         newProj
-      case u: Union if u.metadataOutput.exists(a => requiredAttrIds.contains(a.exprId)) =>
-        u.withNewChildren(u.children.map { child =>
-          // The children of a Union will have the same attributes with different expression IDs
-          val exprIdMap = u.metadataOutput.map(_.exprId)
-            .zip(child.metadataOutput.map(_.exprId)).toMap
-          addMetadataCol(child, requiredAttrIds.map(a => exprIdMap.getOrElse(a, a)))
-        })
       case _ => plan.withNewChildren(plan.children.map(addMetadataCol(_, requiredAttrIds)))
     }
   }
@@ -1249,7 +1243,7 @@ class Analyzer(override val catalogManager: CatalogManager) extends RuleExecutor
             }
             SubqueryAlias(
               catalog.name +: ident.asMultipartIdentifier,
-              StreamingRelationV2(None, table.name, table, options, table.schema.toAttributes,
+              StreamingRelationV2(None, table.name, table, options, table.columns.toAttributes,
                 Some(catalog), Some(ident), v1Fallback))
           } else {
             SubqueryAlias(
@@ -3722,7 +3716,7 @@ class Analyzer(override val catalogManager: CatalogManager) extends RuleExecutor
           colsToAdd(resolvedParentName) = fieldsAdded :+ col.colName
           resolvedPosition
         }
-        val schema = r.table.schema
+        val schema = r.table.columns.asSchema
         val resolvedCols = cols.map { col =>
           col.path match {
             case Some(parent: UnresolvedFieldName) =>
