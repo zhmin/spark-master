@@ -82,7 +82,11 @@ case class SortOrder(
 
   def satisfies(required: SortOrder): Boolean = {
     children.exists(required.child.semanticEquals) &&
-      direction == required.direction && nullOrdering == required.nullOrdering
+      ((direction == required.direction && nullOrdering == required.nullOrdering) ||
+        (direction == null && nullOrdering == required.nullOrdering) ||
+        (direction == required.direction && nullOrdering == null) ||
+        (direction == null && nullOrdering == null)
+        )
   }
 
   override protected def withNewChildrenInternal(newChildren: IndexedSeq[Expression]): SortOrder =
@@ -109,12 +113,16 @@ object SortOrder {
    * </ul>
    */
   def orderingSatisfies(ordering1: Seq[SortOrder], ordering2: Seq[SortOrder]): Boolean = {
-    if (ordering2.isEmpty) {
+    val (literals, ordering1NoLiteral) = ordering1.partition(o =>
+      o.direction == null && o.nullOrdering == null)
+    val ordering2NoLiteral = ordering2.filterNot(required =>
+      literals.exists(_.satisfies(required)))
+    if (ordering2NoLiteral.isEmpty) {
       true
-    } else if (ordering2.length > ordering1.length) {
+    } else if (ordering2NoLiteral.length > ordering1NoLiteral.length) {
       false
     } else {
-      ordering2.zip(ordering1).forall {
+      ordering2NoLiteral.zip(ordering1NoLiteral).forall {
         case (o2, o1) => o1.satisfies(o2)
       }
     }
